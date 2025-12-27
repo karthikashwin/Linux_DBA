@@ -1,0 +1,111 @@
+-- Run as SYS (or SYSTEM with privilege)
+CREATE TABLESPACE tbse
+  DATAFILE '/u01/app/oracle/oradata/<YOUR_DB_NAME>/tbse01.dbf' SIZE 100M
+  AUTOEXTEND ON NEXT 10M
+  EXTENT MANAGEMENT LOCAL
+  SEGMENT SPACE MANAGEMENT AUTO;
+
+-- Run as SYS
+
+-- Profiles
+CREATE PROFILE prof_cust LIMIT
+  PASSWORD_LIFE_TIME 120;     -- 4 months (approx 120 days)
+
+CREATE PROFILE prof_sal LIMIT
+  FAILED_LOGIN_ATTEMPTS 2
+  PASSWORD_LOCK_TIME 0.75     -- 18 hours = 0.75 days
+  INACTIVE_ACCOUNT_TIME 7;    -- lock if no login for 1 week
+
+
+-- Users (passwords can be changed, but you must state them in the report)
+CREATE USER cust IDENTIFIED BY Cust#12345
+  DEFAULT TABLESPACE tbse
+  QUOTA UNLIMITED ON tbse
+  TEMPORARY TABLESPACE temp
+  PROFILE prof_cust
+  ACCOUNT UNLOCK;
+
+CREATE USER sal IDENTIFIED BY Sal#12345
+  DEFAULT TABLESPACE tbse
+  QUOTA UNLIMITED ON tbse
+  TEMPORARY TABLESPACE temp
+  PROFILE prof_sal
+  ACCOUNT UNLOCK;
+
+-- Force cust to change password on first login
+ALTER USER cust PASSWORD EXPIRE;
+
+
+-- Run as SYS (or OE for object grants; SYS is simplest in coursework VM)
+
+-- (a) login
+GRANT CREATE SESSION TO cust;
+GRANT CREATE SESSION TO sal;
+
+-- (b) cust read-only to OE.CUSTOMERS
+GRANT SELECT ON oe.customers TO cust;
+
+-- (c) sal read/write to OE.ORDERS and OE.ORDER_ITEMS using role
+CREATE ROLE rw_access;
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON oe.orders TO rw_access;
+GRANT SELECT, INSERT, UPDATE, DELETE ON oe.order_items TO rw_access;
+
+GRANT rw_access TO sal;
+
+-- (d) both can create tables and views in their own schemas
+GRANT CREATE TABLE, CREATE VIEW TO cust;
+GRANT CREATE TABLE, CREATE VIEW TO sal;
+
+
+-- Run as SAL
+CONNECT sal/Sal#12345;
+
+CREATE TABLE managers (
+  id     NUMBER(10),
+  name   VARCHAR2(30) NOT NULL,
+  phone  NUMBER(15),
+  status CHAR(1),
+  CONSTRAINT pk_managers PRIMARY KEY (id),
+  CONSTRAINT chk_managers_status CHECK (status IN ('P','T'))
+) TABLESPACE tbse;
+
+CREATE TABLE contractors (
+  id        NUMBER(10),
+  name      VARCHAR2(30) NOT NULL,
+  available CHAR(1),
+  contact   NUMBER(10),
+  CONSTRAINT pk_contractors PRIMARY KEY (id),
+  CONSTRAINT chk_contractors_avail CHECK (available IN ('A','U')),
+  CONSTRAINT fk_contractors_mgr FOREIGN KEY (contact)
+    REFERENCES managers(id)
+) TABLESPACE tbse;
+
+-- Insert 2 managers
+INSERT INTO managers (id, name, phone, status)
+VALUES (1, 'Alice Manager', 447700100001, 'P');
+
+INSERT INTO managers (id, name, phone, status)
+VALUES (2, 'Bob Manager', 447700100002, 'T');
+
+-- Insert 3 contractors (contact references MANAGERS.ID)
+INSERT INTO contractors (id, name, available, contact)
+VALUES (101, 'Mike Contractor', 'A', 1);
+
+INSERT INTO contractors (id, name, available, contact)
+VALUES (102, 'Walter Contractor', 'U', 1);
+
+INSERT INTO contractors (id, name, available, contact)
+VALUES (103, 'Dilip Contractor', 'A', 2);
+
+COMMIT;
+
+
+-- should fail (invalid status)
+INSERT INTO managers VALUES (3, 'Bad Status', 123, 'X');
+
+-- should fail (invalid available flag)
+INSERT INTO contractors VALUES (104, 'Bad Available', 'Z', 1);
+
+-- should fail (manager id 999 doesn't exist)
+INSERT INTO contractors VALUES (105, 'Bad FK', 'A', 999);
